@@ -13,21 +13,21 @@ dotenv.config();
 const USERS_TO_CREATE = [
   {
     username: "admin",
-    password: "321",
+    password: "admin321",
     name: "Admin",
     role: "admin" as const,
     isActive: true,
   },
   {
     username: "counter1",
-    password: "321",
+    password: "counter321",
     name: "Counter 1 User",
     role: "counter1" as const,
     isActive: true,
   },
   {
     username: "counter2",
-    password: "321",
+    password: "counter321",
     name: "Counter 2 User",
     role: "counter2" as const,
     isActive: true,
