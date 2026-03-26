@@ -67,8 +67,16 @@ const app = express();
 // Middleware - CORS configuration for LAN access
 const corsOptions = {
     origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, curl, etc.)
+        if (!origin) return callback(null, true);
+
+        // Allow production domain
+        if (origin === 'https://darululoom.healthspire.org' || origin === 'http://darululoom.healthspire.org') {
+            return callback(null, true);
+        }
+
         // Electron/desktop apps often send no origin or "null" when loading from file://
-        if (!origin || origin === 'null' || origin.startsWith('file://')) {
+        if (origin === 'null' || origin.startsWith('file://')) {
             return callback(null, true);
         }
 
