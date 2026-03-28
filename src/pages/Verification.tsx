@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { tokensAPI, toAbsoluteAssetUrl } from "@/lib/api";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -146,6 +147,7 @@ export default function Verification() {
   const [searchQuery, setSearchQuery] = useState("");
   const [formData, setFormData] = useState<FormData>(defaultFormData);
   const [loading, setLoading] = useState(false);
+  const [studentId, setStudentId] = useState<string | null>(null);
 
   // Hostel selection states
   const [hostels, setHostels] = useState<Hostel[]>([]);
@@ -417,25 +419,65 @@ export default function Verification() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const fetchStudentData = useCallback((token: string) => {
+  const fetchStudentData = useCallback(async (token: string) => {
     setLoading(true);
     
-    // Try to load from admission form localStorage first
+    try {
+      // 1. Try to fetch from API first (Central Database)
+      const response = await tokensAPI.getByToken(token);
+      const apiToken = response.data.data;
+      
+      if (apiToken) {
+        console.log("Token found via API:", apiToken);
+        const populatedData: FormData = {
+          ...defaultFormData,
+          tokenNumber: apiToken.tokenNumber || token,
+          name: apiToken.studentName || "",
+          fatherName: apiToken.fatherName || "",
+          dob: apiToken.dateOfBirth || "",
+          cnic: apiToken.cnic || "",
+          passportNumber: apiToken.passportNumber || "",
+          bformNumber: apiToken.bformNumber || "",
+          idType: apiToken.idType || "cnic",
+          statusType: apiToken.statusType || "جدید",
+          phone: apiToken.contact || "",
+          currentAddress: apiToken.currentAddress || "",
+          permanentAddress: apiToken.permanentAddress || "",
+          desiredGrade: apiToken.class || "",
+          guardianName: apiToken.studentName || "", // Fallback
+          contact1: apiToken.contact || "",
+          category: apiToken.category || "",
+          residency: apiToken.residency || "",
+          photoUrl: apiToken.photoUrl ? toAbsoluteAssetUrl(apiToken.photoUrl) : "",
+          nationality: apiToken.idType === "passport" ? "غیر ملکی" : "ملکی",
+          // Load form data if it exists in DB
+          ...(apiToken.formData || {}),
+        };
+        
+        setFormData(populatedData);
+        setStudentId(apiToken._id);
+        toast.success(`ٹوکن ${token} کی تفصیلات ڈیٹا بیس سے لوڈ ہو گئیں`);
+        setShowForm(true);
+        setLoading(false);
+        return;
+      }
+    } catch (error) {
+      console.error("API Error fetching token:", error);
+      // Continue to localStorage fallback if API fails
+    }
+
+    // 2. Try to load from admission form localStorage fallback (Local system only)
     const savedFormData = localStorage.getItem(`admissionForm_${token}`);
     if (savedFormData) {
       const parsed = JSON.parse(savedFormData);
       setFormData({ ...defaultFormData, ...parsed, tokenNumber: token });
-      toast.success("فارم کی تفصیلات لوڈ ہو گئیں");
+      toast.success("فارم کی تفصیلات (لوکل اسٹوریج) سے لوڈ ہو گئیں");
       setShowForm(true);
       setLoading(false);
       return;
     }
     
-    // Debug: Check all localStorage keys
-    console.log("Searching for token:", token);
-    console.log("All localStorage keys:", Object.keys(localStorage));
-    
-    // Try to load from token-management data (check multiple possible keys)
+    // 3. Try to load from token-management local storage (Local system only)
     const possibleKeys = ["jamia_tokens_v1", "tokens", "tokenManagement", "jamia_tokens"];
     let foundToken = null;
     
@@ -444,8 +486,6 @@ export default function Verification() {
       if (tokenStorageData) {
         try {
           const tokens = JSON.parse(tokenStorageData);
-          console.log(`Checking key "${key}":`, tokens);
-          
           if (Array.isArray(tokens)) {
             const matchingToken = tokens.find((t: any) => 
               t.tokenNumber === token || 
@@ -454,18 +494,14 @@ export default function Verification() {
             );
             if (matchingToken) {
               foundToken = matchingToken;
-              console.log(`Found token in key "${key}":`, matchingToken);
               break;
             }
           }
-        } catch (error) {
-          console.error(`Error parsing ${key}:`, error);
-        }
+        } catch (e) {}
       }
     }
     
     if (foundToken) {
-      // Populate form with token data
       const populatedData: FormData = {
         ...defaultFormData,
         tokenNumber: foundToken.tokenNumber || token,
@@ -490,17 +526,15 @@ export default function Verification() {
       };
       
       setFormData(populatedData);
-      console.log("Setting formData with photoUrl from found token:", populatedData.photoUrl);
-      toast.success(`ٹوکن ${token} کی تفصیلات لوڈ ہو گئیں`);
+      toast.success(`ٹوکن ${token} کی تفصیلات (لوکل) لوڈ ہو گئیں`);
       setShowForm(true);
       setLoading(false);
       return;
     }
     
-    // If no data found, show empty form
-    console.log("Token not found in any storage");
+    // 4. If no data found anywhere, show empty form
     setFormData({ ...defaultFormData, tokenNumber: token });
-    toast.info("نیا فارم - براہ کرم تفصیلات درج کریں");
+    toast.info("ٹوکن ڈیٹا بیس میں نہیں ملا - براہ کرم تفصیلات درج کریں");
     setShowForm(true);
     setLoading(false);
   }, []);
@@ -527,6 +561,7 @@ export default function Verification() {
     setShowForm(false);
     setSearchQuery("");
     setFormData(defaultFormData);
+    setStudentId(null);
   };
 
   const handleInputChange = (field: keyof FormData, value: string | boolean) => {
@@ -547,10 +582,21 @@ export default function Verification() {
     }
   };
 
-  const handleSave = () => {
-    // Save to localStorage with token number as key
+  const handleSave = async () => {
+    // Save to localStorage with token number as key (Fallback)
     const key = formData.tokenNumber || `admission_${Date.now()}`;
     localStorage.setItem(`admissionForm_${key}`, JSON.stringify(formData));
+
+    // Save to Central Database if studentId is available
+    if (studentId) {
+      try {
+        await tokensAPI.saveFormData(studentId, formData);
+        toast.success("ڈیٹا بیس میں فارم محفوظ ہو گیا");
+      } catch (error) {
+        console.error("Failed to save to database:", error);
+        toast.error("ڈیٹا بیس میں محفوظ نہیں ہو سکا (صرف لوکل محفوظ ہوا)");
+      }
+    }
 
     // Logic to save hostel allocation to the central 'beds' and update 'hostels'
     if (selectedHostel && selectedRoom && selectedBed) {
