@@ -41,6 +41,7 @@ interface Bed {
   hostelName: string;
   roomNumber: string;
   studentName: string;
+  statusType?: string;
   guardianDate: string;
   leaveDate: string;
   isOccupied: boolean;
@@ -71,6 +72,7 @@ export default function HostelBeds() {
 
   const [newAllocation, setNewAllocation] = useState({
     studentName: "",
+    statusType: "قدیم",
     hostelId: "",
     roomNumber: "",
     bedNumber: "",
@@ -166,6 +168,20 @@ export default function HostelBeds() {
     const selectedRoomData = rooms.find(r => r.hostelId === newAllocation.hostelId && r.roomNumber === newAllocation.roomNumber);
     
     if (selectedRoomData) {
+      // Check if bed number is already occupied in this room
+      const existingBed = beds.find(b => 
+        b.hostelId === newAllocation.hostelId && 
+        b.roomNumber === newAllocation.roomNumber && 
+        b.bedNumber === newAllocation.bedNumber && 
+        b.isOccupied
+      );
+
+      if (existingBed) {
+        setErrorMessage(`بستر نمبر ${newAllocation.bedNumber} پہلے سے ${existingBed.studentName} (${existingBed.statusType || 'مقیم'}) کے پاس ہے!`);
+        setIsErrorDialogOpen(true);
+        return;
+      }
+
       // Find actual occupancy for this room
       const currentOccupied = beds.filter(b => b.hostelId === newAllocation.hostelId && b.roomNumber === newAllocation.roomNumber && b.isOccupied).length;
       const totalCapacity = (selectedRoomData as any).capacity || 0;
@@ -181,6 +197,7 @@ export default function HostelBeds() {
     const bed: Bed = {
       _id: Date.now().toString(),
       studentName: newAllocation.studentName,
+      statusType: newAllocation.statusType,
       hostelId: newAllocation.hostelId,
       hostelName: hostel?.name || "",
       roomNumber: newAllocation.roomNumber,
@@ -221,7 +238,7 @@ export default function HostelBeds() {
     // Notify all components
     window.dispatchEvent(new CustomEvent("hostelsUpdated"));
     
-    setNewAllocation({ studentName: "", hostelId: "", roomNumber: "", bedNumber: "", guardianDate: "", leaveDate: "" });
+    setNewAllocation({ studentName: "", statusType: "قدیم", hostelId: "", roomNumber: "", bedNumber: "", guardianDate: "", leaveDate: "" });
     setIsDialogOpen(false);
     toast.success("نئی بیڈ الوکیشن کامیابی سے شامل ہو گئی");
   };
@@ -341,15 +358,32 @@ export default function HostelBeds() {
                   <DialogTitle className="text-right">نئی بیڈ الوکیشن</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 mt-4" dir="rtl">
-                  <div className="space-y-2">
-                    <Label htmlFor="studentName">طالب علم کا نام *</Label>
-                    <Input
-                      id="studentName"
-                      value={newAllocation.studentName}
-                      onChange={(e) => setNewAllocation({ ...newAllocation, studentName: e.target.value })}
-                      placeholder="طالب علم کا نام درج کریں"
-                      className="text-right"
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="studentName">طالب علم کا نام *</Label>
+                      <Input
+                        id="studentName"
+                        value={newAllocation.studentName}
+                        onChange={(e) => setNewAllocation({ ...newAllocation, studentName: e.target.value })}
+                        placeholder="طالب علم کا نام درج کریں"
+                        className="text-right"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="statusType">کیٹیگری *</Label>
+                      <Select 
+                        value={newAllocation.statusType} 
+                        onValueChange={(val) => setNewAllocation({ ...newAllocation, statusType: val })}
+                      >
+                        <SelectTrigger className="text-right">
+                          <SelectValue placeholder="کیٹیگری منتخب کریں" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="قدیم">قدیم</SelectItem>
+                          <SelectItem value="جدید">جدید</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="hostel">ہاسٹل منتخب کریں *</Label>
@@ -540,6 +574,12 @@ export default function HostelBeds() {
                   </th>
                   <th className="px-4 py-3 text-sm font-semibold text-gray-700">
                     <div className="flex items-center justify-center gap-2">
+                      <Filter className="h-4 w-4" />
+                      <span>کیٹیگری</span>
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 text-sm font-semibold text-gray-700">
+                    <div className="flex items-center justify-center gap-2">
                       <Building2 className="h-4 w-4" />
                       <span>ہاسٹل</span>
                     </div>
@@ -589,8 +629,17 @@ export default function HostelBeds() {
                   </tr>
                 ) : (
                   filteredBeds.map((bed) => (
-                    <tr key={bed._id} className="hover:bg-gray-50 text-center">
-                      <td className="px-4 py-3 font-medium">{bed.studentName}</td>
+                    <tr key={bed._id} className="hover:bg-gray-50/50 transition-colors text-center">
+                      <td className="px-4 py-4">
+                        <span className="font-medium text-gray-900">{bed.studentName}</span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                          bed.statusType === "قدیم" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                        }`}>
+                          {bed.statusType || "مقیم"}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-sm text-gray-600">{bed.hostelName}</td>
                       <td className="px-4 py-3 text-sm">{bed.roomNumber}</td>
                       <td className="px-4 py-3 text-sm font-medium">{bed.bedNumber}</td>

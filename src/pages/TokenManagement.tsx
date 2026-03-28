@@ -533,51 +533,70 @@ export default function TokenManagement() {
       try {
         await tokensAPI.deleteMy(id);
         
-        // 1. Remove admission form
+        // 1. Remove admission form and sync with all possible local keys
+        const possibleKeys = ["jamia_tokens_v1", "tokens", "tokenManagement", "jamia_tokens"];
+        possibleKeys.forEach(key => {
+          try {
+            const data = localStorage.getItem(key);
+            if (data) {
+              const parsed = JSON.parse(data);
+              if (Array.isArray(parsed)) {
+                const filtered = parsed.filter((t: any) => t.id !== id && t.tokenNumber !== tokenNumber);
+                localStorage.setItem(key, JSON.stringify(filtered));
+              }
+            }
+          } catch (e) {}
+        });
+
         if (tokenNumber) {
           localStorage.removeItem(`admissionForm_${tokenNumber}`);
         }
 
         // 2. Cascade delete hostel allocation if exists
-        if (studentName) {
-          const savedBeds = localStorage.getItem("beds");
-          if (savedBeds) {
-            const currentBeds = JSON.parse(savedBeds);
-            const bedToDelete = currentBeds.find((b: any) => b.studentName === studentName);
-            
-            if (bedToDelete) {
-              // Remove from beds list
-              const updatedBeds = currentBeds.filter((b: any) => b.studentName !== studentName);
-              localStorage.setItem("beds", JSON.stringify(updatedBeds));
+        const savedBeds = localStorage.getItem("beds");
+        if (savedBeds) {
+          const currentBeds = JSON.parse(savedBeds);
+          // Try finding by tokenNumber first, then studentName as fallback
+          const bedToDelete = currentBeds.find((b: any) => 
+            (tokenNumber && b.tokenNumber === tokenNumber) || 
+            (studentName && b.studentName === studentName)
+          );
+          
+          if (bedToDelete) {
+            // Remove from beds list
+            const updatedBeds = currentBeds.filter((b: any) => 
+              !(tokenNumber && b.tokenNumber === tokenNumber) && 
+              !(studentName && b.studentName === studentName)
+            );
+            localStorage.setItem("beds", JSON.stringify(updatedBeds));
 
-              // Update hostel occupied count
-              const savedHostels = localStorage.getItem("hostels");
-              if (savedHostels) {
-                const hostelsList = JSON.parse(savedHostels);
-                const updatedHostels = hostelsList.map((h: any) =>
-                  h._id === bedToDelete.hostelId 
-                    ? { ...h, occupied: Math.max(0, (h.occupied || 0) - 1) } 
-                    : h
-                );
-                localStorage.setItem("hostels", JSON.stringify(updatedHostels));
-              }
-
-              // Update room occupied count
-              const savedRooms = localStorage.getItem("rooms");
-              if (savedRooms) {
-                const roomsList = JSON.parse(savedRooms);
-                const updatedRooms = roomsList.map((r: any) =>
-                  (r.hostelId === bedToDelete.hostelId && r.roomNumber === bedToDelete.roomNumber)
-                    ? { ...r, occupied: Math.max(0, (r.occupied || 0) - 1) }
-                    : r
-                );
-                localStorage.setItem("rooms", JSON.stringify(updatedRooms));
-              }
-
-              // Notify all components (Dashboard, Residents, etc.)
-              window.dispatchEvent(new CustomEvent("hostelsUpdated"));
-              toast.info("ہاسٹل الاٹمنٹ بھی حذف کر دی گئی ہے");
+            // Update hostel occupied count
+            const savedHostels = localStorage.getItem("hostels");
+            if (savedHostels) {
+              const hostelsList = JSON.parse(savedHostels);
+              const updatedHostels = hostelsList.map((h: any) =>
+                h._id === bedToDelete.hostelId 
+                  ? { ...h, occupied: Math.max(0, (h.occupied || 0) - 1) } 
+                  : h
+              );
+              localStorage.setItem("hostels", JSON.stringify(updatedHostels));
             }
+
+            // Update room occupied count
+            const savedRooms = localStorage.getItem("rooms");
+            if (savedRooms) {
+              const roomsList = JSON.parse(savedRooms);
+              const updatedRooms = roomsList.map((r: any) =>
+                (r.hostelId === bedToDelete.hostelId && r.roomNumber === bedToDelete.roomNumber)
+                  ? { ...r, occupied: Math.max(0, (r.occupied || 0) - 1) }
+                  : r
+              );
+              localStorage.setItem("rooms", JSON.stringify(updatedRooms));
+            }
+
+            // Notify all components (Dashboard, Residents, etc.)
+            window.dispatchEvent(new CustomEvent("hostelsUpdated"));
+            toast.info("ہاسٹل الاٹمنٹ بھی حذف کر دی گئی ہے");
           }
         }
         
@@ -588,15 +607,18 @@ export default function TokenManagement() {
         
         // Fallback: Remove from localStorage even if API fails
         try {
-          const existingTokensStr = localStorage.getItem("jamia_tokens_v1");
-          if (existingTokensStr) {
-            const existingTokens = JSON.parse(existingTokensStr);
-            if (Array.isArray(existingTokens)) {
-              const updatedTokens = existingTokens.filter((t: any) => t.id !== id);
-              localStorage.setItem("jamia_tokens_v1", JSON.stringify(updatedTokens));
-              setTokens(updatedTokens);
+          const possibleKeys = ["jamia_tokens_v1", "tokens", "tokenManagement", "jamia_tokens"];
+          possibleKeys.forEach(key => {
+            const data = localStorage.getItem(key);
+            if (data) {
+              const parsed = JSON.parse(data);
+              if (Array.isArray(parsed)) {
+                const filtered = parsed.filter((t: any) => t.id !== id && t.tokenNumber !== tokenNumber);
+                localStorage.setItem(key, JSON.stringify(filtered));
+                if (key === "jamia_tokens_v1") setTokens(filtered);
+              }
             }
-          }
+          });
         } catch (err) {
           console.error("Local storage sync failed", err);
         }
@@ -607,16 +629,17 @@ export default function TokenManagement() {
         }
 
         // Cascade delete from localStorage fallback
-        if (studentName) {
+        const savedBeds = localStorage.getItem("beds");
+        if (savedBeds) {
           try {
-            const savedBeds = localStorage.getItem("beds");
-            if (savedBeds) {
-              const currentBeds = JSON.parse(savedBeds);
-              if (Array.isArray(currentBeds)) {
-                const updatedBeds = currentBeds.filter((b: any) => b.studentName !== studentName);
-                localStorage.setItem("beds", JSON.stringify(updatedBeds));
-                window.dispatchEvent(new CustomEvent("hostelsUpdated"));
-              }
+            const currentBeds = JSON.parse(savedBeds);
+            if (Array.isArray(currentBeds)) {
+              const updatedBeds = currentBeds.filter((b: any) => 
+                !(tokenNumber && b.tokenNumber === tokenNumber) && 
+                !(studentName && b.studentName === studentName)
+              );
+              localStorage.setItem("beds", JSON.stringify(updatedBeds));
+              window.dispatchEvent(new CustomEvent("hostelsUpdated"));
             }
           } catch (err) {
             console.error("Beds sync failed", err);

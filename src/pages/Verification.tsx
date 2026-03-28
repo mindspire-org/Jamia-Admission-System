@@ -175,27 +175,8 @@ export default function Verification() {
   // Filter available rooms for selected hostel
   const availableRooms = useMemo(() => {
     if (!selectedHostel) return [];
-    const hostelRooms = rooms.filter(r => r.hostelId === selectedHostel);
-    
-    // For Qadeem students, we might want to sort or filter
-    if (formData.statusType === "قدیم") {
-      const qadeemPerRoom: Record<string, number> = {};
-      beds.forEach(b => {
-        if (b.isOccupied && b.statusType === "قدیم" && b.hostelId === selectedHostel) {
-          qadeemPerRoom[b.roomNumber] = (qadeemPerRoom[b.roomNumber] || 0) + 1;
-        }
-      });
-
-      // Sort rooms: rooms with fewer Qadeem students first
-      return [...hostelRooms].sort((a, b) => {
-        const countA = qadeemPerRoom[a.roomNumber] || 0;
-        const countB = qadeemPerRoom[b.roomNumber] || 0;
-        return countA - countB;
-      });
-    }
-    
-    return hostelRooms;
-  }, [selectedHostel, rooms, formData.statusType, beds]);
+    return rooms.filter(r => r.hostelId === selectedHostel);
+  }, [selectedHostel, rooms]);
 
   // Calculate available bed slots for selected room
   const availableBedSlots = useMemo(() => {
@@ -209,14 +190,26 @@ export default function Verification() {
       b.isOccupied
     );
     
-    const occupiedBedNumbers = new Set(occupiedBeds.map(b => b.bedNumber));
+    const occupiedBedNumbersMap = new Map(occupiedBeds.map(b => [b.bedNumber, b]));
     const capacity = room.capacity || 5;
     
-    const availableSlots = [];
+    const allSlots = [];
     for (let i = 1; i <= capacity; i++) {
       const bedNum = i.toString();
-      if (!occupiedBedNumbers.has(bedNum)) {
-        availableSlots.push({
+      const occupiedBed = occupiedBedNumbersMap.get(bedNum);
+      
+      if (occupiedBed) {
+        allSlots.push({
+          _id: occupiedBed._id,
+          bedNumber: bedNum,
+          roomNumber: selectedRoom,
+          hostelId: selectedHostel,
+          isOccupied: true,
+          studentName: occupiedBed.studentName,
+          statusType: (occupiedBed as any).statusType // Use any cast since statusType might be missing in some bed objects
+        });
+      } else {
+        allSlots.push({
           _id: `virtual-${selectedHostel}-${selectedRoom}-${bedNum}`,
           bedNumber: bedNum,
           roomNumber: selectedRoom,
@@ -225,7 +218,7 @@ export default function Verification() {
         });
       }
     }
-    return availableSlots;
+    return allSlots;
   }, [selectedRoom, selectedHostel, rooms, beds]);
 
   // Handle hostel selection
@@ -238,65 +231,6 @@ export default function Verification() {
       setFormData(prev => ({ ...prev, residency: hostel.name }));
     }
   };
-
-  // Logic to find best room for Qadeem students
-  const findBestRoomForQadeem = useCallback(() => {
-    if (formData.statusType !== "قدیم") return;
-
-    // 1. Calculate Qadeem count per room
-    const qadeemPerRoom: Record<string, number> = {}; // key: hostelId-roomNumber, value: count
-    beds.forEach(b => {
-      if (b.isOccupied && b.statusType === "قدیم") {
-        const key = `${b.hostelId}-${b.roomNumber}`;
-        qadeemPerRoom[key] = (qadeemPerRoom[key] || 0) + 1;
-      }
-    });
-
-    // 2. Find rooms with minimum Qadeem students, but also having capacity
-    let bestHostelId: string | undefined;
-    let bestRoomNumber: string | undefined;
-    let minQadeemCount = Infinity;
-
-    // We want to distribute Qadeem students as 1 per room, then 2, etc.
-    // Try to find a room with 0 Qadeem, then 1, then 2...
-    for (let currentLimit = 0; currentLimit < 10; currentLimit++) {
-      for (const hostel of hostels) {
-        const hostelRooms = rooms.filter(r => r.hostelId === hostel._id);
-        for (const room of hostelRooms) {
-          // Check capacity
-          const currentOccupied = beds.filter(b => b.hostelId === hostel._id && b.roomNumber === room.roomNumber && b.isOccupied).length;
-          if (currentOccupied < (room.capacity || 5)) {
-            const qCount = qadeemPerRoom[`${hostel._id}-${room.roomNumber}`] || 0;
-            if (qCount === currentLimit) {
-              bestHostelId = hostel._id;
-              bestRoomNumber = room.roomNumber;
-              break;
-            }
-          }
-        }
-        if (bestHostelId) break;
-      }
-      if (bestHostelId) break;
-    }
-
-    if (bestHostelId && bestRoomNumber) {
-      setSelectedHostel(bestHostelId);
-      setSelectedRoom(bestRoomNumber);
-      setSelectedBed(undefined);
-      const hostel = hostels.find(h => h._id === bestHostelId);
-      if (hostel) {
-        setFormData(prev => ({ ...prev, residency: `${hostel.name} - کمرہ: ${bestRoomNumber}` }));
-        toast.info(`قدیم طالب علم کے لیے بہترین جگہ (${hostel.name}، کمرہ ${bestRoomNumber}) خودکار طور پر منتخب کر لی گئی ہے`);
-      }
-    }
-  }, [formData.statusType, hostels, rooms, beds, formData.name]);
-
-  // Trigger auto-allocation for Qadeem students when form is shown or status changes
-  useEffect(() => {
-    if (showForm && formData.statusType === "قدیم" && !selectedHostel) {
-      findBestRoomForQadeem();
-    }
-  }, [showForm, formData.statusType, findBestRoomForQadeem, selectedHostel]);
 
   // Handle room selection
   const handleRoomChange = (roomNumber: string) => {
@@ -408,16 +342,181 @@ export default function Verification() {
     }
   };
 
-  // Auto-fetch data when search query changes (with debounce)
+  // Dynamic Grade Options
+  const [gradeOptions, setGradeOptions] = useState<string[]>(() => {
+    const saved = localStorage.getItem("jamia_grade_options");
+    return saved ? JSON.parse(saved) : ["اولیٰ", "ثانیہ", "ثالثہ", "رابعہ", "خامسہ", "سادِسہ", "سابعہ", "دورہ حدیث"];
+  });
+  const [editingGradeIndex, setEditingGradeIndex] = useState<number | null>(null);
+  const [editingGradeValue, setEditingGradeValue] = useState("");
+  const [newGradeValue, setNewGradeValue] = useState("");
+  const [isAddingNewGrade, setIsAddingNewGrade] = useState(false);
+
   useEffect(() => {
-    if (!searchQuery.trim()) return;
-    
-    const timer = setTimeout(() => {
-      fetchStudentData(searchQuery);
-    }, 500); // 500ms debounce
-    
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+    localStorage.setItem("jamia_grade_options", JSON.stringify(gradeOptions));
+  }, [gradeOptions]);
+
+  const addGradeOption = () => {
+    if (newGradeValue.trim() && !gradeOptions.includes(newGradeValue.trim())) {
+      setGradeOptions([...gradeOptions, newGradeValue.trim()]);
+      setNewGradeValue("");
+      setIsAddingNewGrade(false);
+      toast.success("نیا درجہ شامل کر دیا گیا");
+    }
+  };
+
+  const deleteGradeOption = (index: number) => {
+    const newOptions = gradeOptions.filter((_, i) => i !== index);
+    setGradeOptions(newOptions);
+    toast.success("درجہ حذف کر دیا گیا");
+  };
+
+  const startEditingGrade = (index: number, value: string) => {
+    setEditingGradeIndex(index);
+    setEditingGradeValue(value);
+  };
+
+  const saveEditGrade = (index: number) => {
+    if (editingGradeValue.trim()) {
+      const newOptions = [...gradeOptions];
+      newOptions[index] = editingGradeValue.trim();
+      setGradeOptions(newOptions);
+      setEditingGradeIndex(null);
+      toast.success("تبدیلی محفوظ کر لی گئی");
+    }
+  };
+
+  // Dynamic Taqdeer Options
+  const [taqdeerOptions, setTaqdeerOptions] = useState<string[]>(() => {
+    const saved = localStorage.getItem("jamia_taqdeer_options");
+    return saved ? JSON.parse(saved) : ["ممتاز", "جید جدا", "جید", "مقبول", "راسب"];
+  });
+  const [editingTaqdeerIndex, setEditingTaqdeerIndex] = useState<number | null>(null);
+  const [editingTaqdeerValue, setEditingTaqdeerValue] = useState("");
+  const [newTaqdeerValue, setNewTaqdeerValue] = useState("");
+  const [isAddingNewTaqdeer, setIsAddingNewTaqdeer] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("jamia_taqdeer_options", JSON.stringify(taqdeerOptions));
+  }, [taqdeerOptions]);
+
+  const addTaqdeerOption = () => {
+    if (newTaqdeerValue.trim() && !taqdeerOptions.includes(newTaqdeerValue.trim())) {
+      setTaqdeerOptions([...taqdeerOptions, newTaqdeerValue.trim()]);
+      setNewTaqdeerValue("");
+      setIsAddingNewTaqdeer(false);
+      toast.success("نئی تقدیر شامل کر دی گئی");
+    }
+  };
+
+  const deleteTaqdeerOption = (index: number) => {
+    const newOptions = taqdeerOptions.filter((_, i) => i !== index);
+    setTaqdeerOptions(newOptions);
+    toast.success("تقدیر حذف کر دی گئی");
+  };
+
+  const startEditingTaqdeer = (index: number, value: string) => {
+    setEditingTaqdeerIndex(index);
+    setEditingTaqdeerValue(value);
+  };
+
+  const saveEditTaqdeer = (index: number) => {
+    if (editingTaqdeerValue.trim()) {
+      const newOptions = [...taqdeerOptions];
+      newOptions[index] = editingTaqdeerValue.trim();
+      setTaqdeerOptions(newOptions);
+      setEditingTaqdeerIndex(null);
+      toast.success("تبدیلی محفوظ کر لی گئی");
+    }
+  };
+
+  // Dynamic Occupation Options
+  const [occupationOptions, setOccupationOptions] = useState<string[]>(() => {
+    const saved = localStorage.getItem("jamia_occupation_options");
+    return saved ? JSON.parse(saved) : ["ملازمت", "تجارت", "زمینداری", "مزدوری", "دیگر"];
+  });
+  const [editingOccupationIndex, setEditingOccupationIndex] = useState<number | null>(null);
+  const [editingOccupationValue, setEditingOccupationValue] = useState("");
+  const [newOccupationValue, setNewOccupationValue] = useState("");
+  const [isAddingNewOccupation, setIsAddingNewOccupation] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("jamia_occupation_options", JSON.stringify(occupationOptions));
+  }, [occupationOptions]);
+
+  const addOccupationOption = () => {
+    if (newOccupationValue.trim() && !occupationOptions.includes(newOccupationValue.trim())) {
+      setOccupationOptions([...occupationOptions, newOccupationValue.trim()]);
+      setNewOccupationValue("");
+      setIsAddingNewOccupation(false);
+      toast.success("نیا پیشہ شامل کر دیا گیا");
+    }
+  };
+
+  const deleteOccupationOption = (index: number) => {
+    const newOptions = occupationOptions.filter((_, i) => i !== index);
+    setOccupationOptions(newOptions);
+    toast.success("پیشہ حذف کر دیا گیا");
+  };
+
+  const startEditingOccupation = (index: number, value: string) => {
+    setEditingOccupationIndex(index);
+    setEditingOccupationValue(value);
+  };
+
+  const saveEditOccupation = () => {
+    if (editingOccupationValue.trim() && editingOccupationIndex !== null) {
+      const newOptions = [...occupationOptions];
+      newOptions[editingOccupationIndex] = editingOccupationValue.trim();
+      setOccupationOptions(newOptions);
+      setEditingOccupationIndex(null);
+      toast.success("تبدیلی محفوظ کر لی گئی");
+    }
+  };
+
+  // Dynamic Last Grade Options
+  const [lastGradeOptions, setLastGradeOptions] = useState<string[]>(() => {
+    const saved = localStorage.getItem("jamia_last_grade_options");
+    return saved ? JSON.parse(saved) : ["Middle", "Matric", "Inter", "Bachelor", "Master"];
+  });
+  const [editingLastGradeIndex, setEditingLastGradeIndex] = useState<number | null>(null);
+  const [editingLastGradeValue, setEditingLastGradeValue] = useState("");
+  const [newLastGradeValue, setNewLastGradeValue] = useState("");
+  const [isAddingNewLastGrade, setIsAddingNewLastGrade] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("jamia_last_grade_options", JSON.stringify(lastGradeOptions));
+  }, [lastGradeOptions]);
+
+  const addLastGradeOption = () => {
+    if (newLastGradeValue.trim() && !lastGradeOptions.includes(newLastGradeValue.trim())) {
+      setLastGradeOptions([...lastGradeOptions, newLastGradeValue.trim()]);
+      setNewLastGradeValue("");
+      setIsAddingNewLastGrade(false);
+      toast.success("نیا درجہ شامل کر دیا گیا");
+    }
+  };
+
+  const deleteLastGradeOption = (index: number) => {
+    const newOptions = lastGradeOptions.filter((_, i) => i !== index);
+    setLastGradeOptions(newOptions);
+    toast.success("درجہ حذف کر دیا گیا");
+  };
+
+  const startEditingLastGrade = (index: number, value: string) => {
+    setEditingLastGradeIndex(index);
+    setEditingLastGradeValue(value);
+  };
+
+  const saveEditLastGrade = (index: number) => {
+    if (editingLastGradeValue.trim()) {
+      const newOptions = [...lastGradeOptions];
+      newOptions[index] = editingLastGradeValue.trim();
+      setLastGradeOptions(newOptions);
+      setEditingLastGradeIndex(null);
+      toast.success("تبدیلی محفوظ کر لی گئی");
+    }
+  };
 
   const fetchStudentData = useCallback(async (token: string) => {
     setLoading(true);
@@ -429,9 +528,16 @@ export default function Verification() {
       
       if (apiToken) {
         console.log("Token found via API:", apiToken);
+        
+        // Calculate admission date from createdAt
+        const admissionDate = apiToken.createdAt
+          ? new Date(apiToken.createdAt).toLocaleDateString("ur-PK")
+          : new Date().toLocaleDateString("ur-PK");
+
         const populatedData: FormData = {
           ...defaultFormData,
           tokenNumber: apiToken.tokenNumber || token,
+          admissionDate: admissionDate, // Auto-populate with token generation date
           name: apiToken.studentName || "",
           fatherName: apiToken.fatherName || "",
           dob: apiToken.dateOfBirth || "",
@@ -444,8 +550,8 @@ export default function Verification() {
           currentAddress: apiToken.currentAddress || "",
           permanentAddress: apiToken.permanentAddress || "",
           desiredGrade: apiToken.class || "",
-          guardianName: apiToken.studentName || "", // Fallback
-          contact1: apiToken.contact || "",
+          guardianName: "", // Clear fallback to avoid confusion
+          contact1: "", // Don't auto-populate from student contact
           category: apiToken.category || "",
           residency: apiToken.residency || "",
           photoUrl: apiToken.photoUrl ? toAbsoluteAssetUrl(apiToken.photoUrl) : "",
@@ -470,7 +576,12 @@ export default function Verification() {
     const savedFormData = localStorage.getItem(`admissionForm_${token}`);
     if (savedFormData) {
       const parsed = JSON.parse(savedFormData);
-      setFormData({ ...defaultFormData, ...parsed, tokenNumber: token });
+      setFormData({ 
+        ...defaultFormData, 
+        ...parsed, 
+        tokenNumber: token,
+        photoUrl: parsed.photoUrl ? toAbsoluteAssetUrl(parsed.photoUrl) : ""
+      });
       toast.success("فارم کی تفصیلات (لوکل اسٹوریج) سے لوڈ ہو گئیں");
       setShowForm(true);
       setLoading(false);
@@ -505,6 +616,7 @@ export default function Verification() {
       const populatedData: FormData = {
         ...defaultFormData,
         tokenNumber: foundToken.tokenNumber || token,
+        admissionDate: foundToken.issueDate || new Date().toLocaleDateString("ur-PK"), // Fallback to issueDate
         name: foundToken.studentName || "",
         fatherName: foundToken.fatherName || "",
         dob: foundToken.dateOfBirth || "",
@@ -517,11 +629,11 @@ export default function Verification() {
         currentAddress: foundToken.currentAddress || "",
         permanentAddress: foundToken.permanentAddress || "",
         desiredGrade: foundToken.class || "",
-        guardianName: foundToken.studentName || "",
-        contact1: foundToken.contact || "",
+        guardianName: "", 
+        contact1: "", 
         category: foundToken.category || "",
         residency: foundToken.residency || "",
-        photoUrl: foundToken.photoUrl || "",
+        photoUrl: foundToken.photoUrl ? toAbsoluteAssetUrl(foundToken.photoUrl) : "",
         nationality: foundToken.idType === "passport" ? "غیر ملکی" : "ملکی",
       };
       
@@ -532,10 +644,9 @@ export default function Verification() {
       return;
     }
     
-    // 4. If no data found anywhere, show empty form
-    setFormData({ ...defaultFormData, tokenNumber: token });
-    toast.info("ٹوکن ڈیٹا بیس میں نہیں ملا - براہ کرم تفصیلات درج کریں");
-    setShowForm(true);
+    // 4. If no data found anywhere, do NOT show form
+    toast.error("ٹوکن ڈیٹا بیس میں نہیں ملا - براہ کرم درست ٹوکن نمبر درج کریں");
+    setShowForm(false);
     setLoading(false);
   }, []);
 
@@ -547,7 +658,12 @@ export default function Verification() {
       const savedData = localStorage.getItem(`admissionForm_${token}`);
       if (savedData) {
         const parsed = JSON.parse(savedData);
-        setFormData({ ...defaultFormData, ...parsed, tokenNumber: token });
+        setFormData({ 
+          ...defaultFormData, 
+          ...parsed, 
+          tokenNumber: token,
+          photoUrl: parsed.photoUrl ? toAbsoluteAssetUrl(parsed.photoUrl) : ""
+        });
         toast.success("فارم کی تفصیلات لوڈ ہو گئیں");
       } else {
         setFormData({ ...defaultFormData, tokenNumber: token });
@@ -559,12 +675,27 @@ export default function Verification() {
 
   const handleBackToSearch = () => {
     setShowForm(false);
-    setSearchQuery("");
+    // Don't clear searchQuery to allow easy editing
     setFormData(defaultFormData);
     setStudentId(null);
   };
 
   const handleInputChange = (field: keyof FormData, value: string | boolean) => {
+    if (field === "regNo" && typeof value === "string") {
+      // Remove all non-digits for formatting
+      const digits = value.replace(/\D/g, "");
+      let formatted = "";
+      
+      if (digits.length <= 4) {
+        formatted = digits;
+      } else if (digits.length <= 6) {
+        formatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
+      } else {
+        formatted = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 12)}`;
+      }
+      setFormData(prev => ({ ...prev, [field]: formatted }));
+      return;
+    }
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -583,10 +714,6 @@ export default function Verification() {
   };
 
   const handleSave = async () => {
-    // Save to localStorage with token number as key (Fallback)
-    const key = formData.tokenNumber || `admission_${Date.now()}`;
-    localStorage.setItem(`admissionForm_${key}`, JSON.stringify(formData));
-
     // Save to Central Database if studentId is available
     if (studentId) {
       try {
@@ -597,6 +724,10 @@ export default function Verification() {
         toast.error("ڈیٹا بیس میں محفوظ نہیں ہو سکا (صرف لوکل محفوظ ہوا)");
       }
     }
+
+    // Save to localStorage with token number as key (Fallback/Cache)
+    const key = formData.tokenNumber || `admission_${Date.now()}`;
+    localStorage.setItem(`admissionForm_${key}`, JSON.stringify(formData));
 
     // Logic to save hostel allocation to the central 'beds' and update 'hostels'
     if (selectedHostel && selectedRoom && selectedBed) {
@@ -610,6 +741,7 @@ export default function Verification() {
       
       const newBedAllocation = {
         _id: `bed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        tokenNumber: formData.tokenNumber, // Added tokenNumber for accurate deletion
         studentName: formData.name,
         statusType: formData.statusType, // Save student status
         hostelId: selectedHostel,
@@ -674,7 +806,12 @@ export default function Verification() {
       const savedData = localStorage.getItem(`admissionForm_${token}`);
       if (savedData) {
         const parsed = JSON.parse(savedData);
-        setFormData({ ...defaultFormData, ...parsed, tokenNumber: token });
+        setFormData({ 
+          ...defaultFormData, 
+          ...parsed, 
+          tokenNumber: token,
+          photoUrl: parsed.photoUrl ? toAbsoluteAssetUrl(parsed.photoUrl) : ""
+        });
         setShowForm(true);
       }
     }
@@ -701,13 +838,18 @@ export default function Verification() {
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && searchQuery.trim()) {
+                      fetchStudentData(searchQuery);
+                    }
+                  }}
                   placeholder="ٹوکن نمبر لکھیں..."
                   className="text-right"
                   disabled={loading}
                 />
               </div>
               <p className="text-sm text-gray-500 mt-2">
-                نمبر لکھتے ہی خودبخود تلاش ہو جائے گا
+                ٹوکن نمبر لکھ کر Enter دبائیں
               </p>
             </div>
 
@@ -777,16 +919,95 @@ export default function Verification() {
             </div>
             <div className="top-info-body">
               <div className="top-info-left">
-                <div className="top-info-row grade-row">
+                <div className="top-info-row grade-row group">
                   <span className="info-label grade-label">مطلوبہ درجہ:</span>
-                  <input 
-                    type="text" 
-                    className="info-line-input grade-input"
-                    value={formData.desiredGrade}
-                    onChange={(e) => handleInputChange("desiredGrade", e.target.value)}
-                  />
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="text" 
+                      className="info-line-input grade-input"
+                      value={formData.desiredGrade}
+                      onChange={(e) => handleInputChange("desiredGrade", e.target.value)}
+                    />
+                    <div className="print:hidden">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-7 px-2 text-[10px] whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white transition-colors border-none">
+                            منتخب کریں
+                          </Button>
+                        </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56 bg-white border shadow-lg z-[100]">
+                        {gradeOptions.map((opt, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-1 hover:bg-gray-100">
+                            {editingGradeIndex === idx ? (
+                              <div className="flex items-center gap-1 flex-1">
+                                <Input 
+                                  value={editingGradeValue} 
+                                  onChange={(e) => setEditingGradeValue(e.target.value)}
+                                  className="h-7 text-xs"
+                                  autoFocus
+                                />
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); saveEditGrade(idx); }}>
+                                  <Check className="h-3 w-3 text-green-600" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); setEditingGradeIndex(null); }}>
+                                  <X className="h-3 w-3 text-red-600" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <>
+                                <DropdownMenuItem 
+                                  className="flex-1 cursor-pointer text-right"
+                                  onClick={() => handleInputChange("desiredGrade", opt)}
+                                >
+                                  {opt}
+                                </DropdownMenuItem>
+                                <div className="flex gap-1">
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); startEditingGrade(idx, opt); }}>
+                                    <Edit2 className="h-3 w-3" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); deleteGradeOption(idx); }}>
+                                    <Trash2 className="h-3 w-3 text-red-500" />
+                                  </Button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                        <div className="border-t p-2">
+                          {isAddingNewGrade ? (
+                            <div className="flex items-center gap-1">
+                              <Input 
+                                placeholder="نیا درجہ..." 
+                                value={newGradeValue}
+                                onChange={(e) => setNewGradeValue(e.target.value)}
+                                className="h-8 text-xs"
+                                autoFocus
+                              />
+                              <Button size="icon" className="h-7 w-7" onClick={addGradeOption}>
+                                <Check className="h-4 w-4" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setIsAddingNewGrade(false)}>
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="w-full h-8 text-xs border-dashed"
+                              onClick={() => setIsAddingNewGrade(true)}
+                            >
+                              <Plus className="h-3 w-3 ml-1" />
+                              نئی آپشن شامل کریں
+                            </Button>
+                          )}
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
-                <div className="top-info-spacer"></div>
+              </div>
+              <div className="top-info-spacer"></div>
                 <div className="top-info-row tokens-row bottom-row">
                   <div className="info-item compact token-left">
                     <span className="info-label">ٹوکن نمبر:</span>
@@ -917,13 +1138,110 @@ export default function Verification() {
             <div className="section-box compact-section">
               <div className="form-row compact-row">
                 <div className="field field-auto">
-                  <label>{formData.category === 'Wafaq' ? 'وفاق کا آخری پاس کردہ درجہ:' : 'درسِ نظامی کا آخری پاس کردہ درجہ:'}</label>
-                  <input 
-                    type="text" 
-                    className="field-input xs"
-                    value={formData.lastGrade}
-                    onChange={(e) => handleInputChange("lastGrade", e.target.value)}
-                  />
+                  <div className="flex items-center gap-1">
+                    <label>{formData.category === 'Wafaq' ? 'وفاق کا آخری پاس کردہ درجہ:' : 'درسِ نظامی کا آخری پاس کردہ درجہ:'}</label>
+                    <div className="print:hidden">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-6 px-1 text-[9px] whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white transition-colors border-none">
+                            منتخب کریں
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40 bg-white border shadow-lg z-[100]">
+                          <DropdownMenuItem className="cursor-pointer text-right" onClick={() => handleInputChange("category", "Wafaq")}>
+                            وفاقی
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="cursor-pointer text-right" onClick={() => handleInputChange("category", "Other")}>
+                            غیر وفاقی
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 relative">
+                    <input 
+                      type="text" 
+                      className="field-input xs"
+                      value={formData.lastGrade}
+                      onChange={(e) => handleInputChange("lastGrade", e.target.value)}
+                    />
+                    <div className="print:hidden">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-6 px-1 text-[9px] whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white transition-colors border-none">
+                            منتخب کریں
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56 bg-white border shadow-lg z-[100]">
+                          {lastGradeOptions.map((opt, idx) => (
+                            <div key={idx} className="flex items-center justify-between p-1 hover:bg-gray-100">
+                              {editingLastGradeIndex === idx ? (
+                                <div className="flex items-center gap-1 flex-1">
+                                  <Input 
+                                    value={editingLastGradeValue} 
+                                    onChange={(e) => setEditingLastGradeValue(e.target.value)}
+                                    className="h-7 text-xs"
+                                    autoFocus
+                                  />
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); saveEditLastGrade(idx); }}>
+                                    <Check className="h-3 w-3 text-green-600" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); setEditingLastGradeIndex(null); }}>
+                                    <X className="h-3 w-3 text-red-600" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <>
+                                  <DropdownMenuItem 
+                                    className="flex-1 cursor-pointer text-right"
+                                    onClick={() => handleInputChange("lastGrade", opt)}
+                                  >
+                                    {opt}
+                                  </DropdownMenuItem>
+                                  <div className="flex gap-1">
+                                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); startEditingLastGrade(idx, opt); }}>
+                                      <Edit2 className="h-3 w-3" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); deleteLastGradeOption(idx); }}>
+                                      <Trash2 className="h-3 w-3 text-red-500" />
+                                    </Button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                          <div className="border-t p-2">
+                            {isAddingNewLastGrade ? (
+                              <div className="flex items-center gap-1">
+                                <Input 
+                                  placeholder="نیا درجہ..." 
+                                  value={newLastGradeValue}
+                                  onChange={(e) => setNewLastGradeValue(e.target.value)}
+                                  className="h-8 text-xs"
+                                  autoFocus
+                                />
+                                <Button size="icon" className="h-7 w-7" onClick={addLastGradeOption}>
+                                  <Check className="h-4 w-4" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setIsAddingNewLastGrade(false)}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button 
+                                variant="ghost" 
+                                className="w-full h-8 text-xs flex items-center gap-1 justify-center border-dashed border"
+                                onClick={() => setIsAddingNewLastGrade(true)}
+                              >
+                                <Plus className="h-3 w-3" />
+                                نیا درجہ شامل کریں
+                              </Button>
+                            )}
+                          </div>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
                 </div>
                 <div className="field field-auto line-field">
                   <label>حاصل کردہ نمبرات:</label>
@@ -936,12 +1254,90 @@ export default function Verification() {
                 </div>
                 <div className="field field-auto">
                   <label>تقدیر:</label>
-                  <input 
-                    type="text" 
-                    className="field-input wide"
-                    value={formData.grade}
-                    onChange={(e) => handleInputChange("grade", e.target.value)}
-                  />
+                  <div className="flex items-center gap-1 relative">
+                    <input 
+                      type="text" 
+                      className="field-input wide"
+                      value={formData.grade}
+                      onChange={(e) => handleInputChange("grade", e.target.value)}
+                    />
+                    <div className="print:hidden">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-6 px-1 text-[9px] whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white transition-colors border-none">
+                            منتخب کریں
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56 bg-white border shadow-lg z-[100]">
+                          {taqdeerOptions.map((opt, idx) => (
+                            <div key={idx} className="flex items-center justify-between p-1 hover:bg-gray-100">
+                              {editingTaqdeerIndex === idx ? (
+                                <div className="flex items-center gap-1 flex-1">
+                                  <Input 
+                                    value={editingTaqdeerValue} 
+                                    onChange={(e) => setEditingTaqdeerValue(e.target.value)}
+                                    className="h-7 text-xs"
+                                    autoFocus
+                                  />
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); saveEditTaqdeer(idx); }}>
+                                    <Check className="h-3 w-3 text-green-600" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); setEditingTaqdeerIndex(null); }}>
+                                    <X className="h-3 w-3 text-red-600" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <>
+                                  <DropdownMenuItem 
+                                    className="flex-1 cursor-pointer text-right"
+                                    onClick={() => handleInputChange("grade", opt)}
+                                  >
+                                    {opt}
+                                  </DropdownMenuItem>
+                                  <div className="flex gap-1">
+                                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); startEditingTaqdeer(idx, opt); }}>
+                                      <Edit2 className="h-3 w-3" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); deleteTaqdeerOption(idx); }}>
+                                      <Trash2 className="h-3 w-3 text-red-500" />
+                                    </Button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                          <div className="border-t p-2">
+                            {isAddingNewTaqdeer ? (
+                              <div className="flex items-center gap-1">
+                                <Input 
+                                  placeholder="نئی تقدیر..." 
+                                  value={newTaqdeerValue}
+                                  onChange={(e) => setNewTaqdeerValue(e.target.value)}
+                                  className="h-8 text-xs"
+                                  autoFocus
+                                />
+                                <Button size="icon" className="h-7 w-7" onClick={addTaqdeerOption}>
+                                  <Check className="h-4 w-4" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setIsAddingNewTaqdeer(false)}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button 
+                                variant="ghost" 
+                                className="w-full h-8 text-xs flex items-center gap-1 justify-center border-dashed border"
+                                onClick={() => setIsAddingNewTaqdeer(true)}
+                              >
+                                <Plus className="h-3 w-3" />
+                                نئی آپشن شامل کریں
+                              </Button>
+                            )}
+                          </div>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="form-row">
@@ -976,14 +1372,14 @@ export default function Verification() {
                 </div>
                 <div className="field field-auto reg-field">
                   <label>رقم التسجيل:</label>
-                  <div className="reg-row" dir="ltr">
-                    {formData.regNo.split("").map((char, i) => (
-                      <div key={i} className="digit-box">{char}</div>
-                    ))}
-                    {Array.from({ length: 12 - formData.regNo.length }).map((_, i) => (
-                      <div key={`empty-${i}`} className="digit-box"></div>
-                    ))}
-                  </div>
+                  <input 
+                    type="text" 
+                    className="field-input reg-input"
+                    value={formData.regNo}
+                    onChange={(e) => handleInputChange("regNo", e.target.value)}
+                    placeholder="XXXX-XX-XXXXXX"
+                    dir="ltr"
+                  />
                 </div>
               </div>
               <div className="form-row compact-row items-center">
@@ -999,7 +1395,7 @@ export default function Verification() {
                     <div className="print:hidden">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="h-6 px-2 text-xs">
+                          <Button variant="outline" size="sm" className="h-7 px-2 text-[10px] whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white transition-colors border-none">
                             منتخب کریں
                           </Button>
                         </DropdownMenuTrigger>
@@ -1182,16 +1578,94 @@ export default function Verification() {
                 </div>
                 <div className="field field-auto">
                   <label>پیشہ:</label>
-                  <input 
-                    type="text" 
-                    className="field-input short"
-                    value={formData.occupation}
-                    onChange={(e) => handleInputChange("occupation", e.target.value)}
-                  />
+                  <div className="flex items-center gap-1 relative">
+                    <input 
+                      type="text" 
+                      className="field-input short"
+                      value={formData.occupation}
+                      onChange={(e) => handleInputChange("occupation", e.target.value)}
+                    />
+                    <div className="print:hidden">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-6 px-1 text-[9px] whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white transition-colors border-none">
+                            منتخب کریں
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56 bg-white border shadow-lg z-[100]">
+                          {occupationOptions.map((opt, idx) => (
+                            <div key={idx} className="flex items-center justify-between p-1 hover:bg-gray-100">
+                              {editingOccupationIndex === idx ? (
+                                <div className="flex items-center gap-1 flex-1">
+                                  <Input 
+                                    value={editingOccupationValue} 
+                                    onChange={(e) => setEditingOccupationValue(e.target.value)}
+                                    className="h-7 text-xs"
+                                    autoFocus
+                                  />
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); saveEditOccupation(); }}>
+                                    <Check className="h-3 w-3 text-green-600" />
+                                  </Button>
+                                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); setEditingOccupationIndex(null); }}>
+                                    <X className="h-3 w-3 text-red-600" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <>
+                                  <DropdownMenuItem 
+                                    className="flex-1 cursor-pointer text-right"
+                                    onClick={() => handleInputChange("occupation", opt)}
+                                  >
+                                    {opt}
+                                  </DropdownMenuItem>
+                                  <div className="flex gap-1">
+                                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); startEditingOccupation(idx, opt); }}>
+                                      <Edit2 className="h-3 w-3" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); deleteOccupationOption(idx); }}>
+                                      <Trash2 className="h-3 w-3 text-red-500" />
+                                    </Button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                          <div className="border-t p-2">
+                            {isAddingNewOccupation ? (
+                              <div className="flex items-center gap-1">
+                                <Input 
+                                  placeholder="نیا پیشہ..." 
+                                  value={newOccupationValue}
+                                  onChange={(e) => setNewOccupationValue(e.target.value)}
+                                  className="h-8 text-xs"
+                                  autoFocus
+                                />
+                                <Button size="icon" className="h-7 w-7" onClick={addOccupationOption}>
+                                  <Check className="h-4 w-4" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setIsAddingNewOccupation(false)}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button 
+                                variant="ghost" 
+                                className="w-full h-8 text-xs flex items-center gap-1 justify-center border-dashed border"
+                                onClick={() => setIsAddingNewOccupation(true)}
+                              >
+                                <Plus className="h-3 w-3" />
+                                نیا پیشہ شامل کریں
+                              </Button>
+                            )}
+                          </div>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
                 </div>
                 <div className="field field-auto">
                   <label>سرپرست سے رشتہ:</label>
-                  <div className="flex items-center gap-2 flex-1 relative">
+                  <div className="flex items-center gap-1 relative">
                     <input 
                       type="text" 
                       className="field-input short"
@@ -1201,7 +1675,7 @@ export default function Verification() {
                     <div className="print:hidden">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="h-6 px-2 text-xs">
+                          <Button variant="outline" size="sm" className="h-6 px-1 text-[9px] whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white transition-colors border-none">
                             منتخب کریں
                           </Button>
                         </DropdownMenuTrigger>
@@ -1407,7 +1881,21 @@ export default function Verification() {
                         </SelectTrigger>
                         <SelectContent>
                           {availableBedSlots.map((b) => (
-                            <SelectItem key={b._id} value={b.bedNumber} className="text-right">{b.bedNumber}</SelectItem>
+                            <SelectItem 
+                              key={b._id} 
+                              value={b.bedNumber} 
+                              className="text-right"
+                              disabled={b.isOccupied}
+                            >
+                              <div className="flex flex-col items-end">
+                                <span>بستر {b.bedNumber}</span>
+                                {b.isOccupied && (
+                                  <span className="text-[10px] text-red-500 font-bold">
+                                    {b.studentName} ({b.statusType || "مقیم"})
+                                  </span>
+                                )}
+                              </div>
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1490,45 +1978,45 @@ export default function Verification() {
         .form-header {
           display: flex;
           align-items: stretch;
-          margin-bottom: 5px;
+          margin-bottom: 4px;
         }
 
         .header-center {
           flex: 1;
           text-align: center;
-          padding: 5px 10px;
+          padding: 2px 10px;
           display: flex;
           flex-direction: column;
           justify-content: center;
         }
 
         .header-title {
-          font-size: 28px;
+          font-size: 22px;
           font-weight: 600;
-          line-height: 1.3;
-          margin-bottom: 3px;
+          line-height: 1.2;
+          margin-bottom: 2px;
         }
 
         .header-city {
-          font-size: 18px;
+          font-size: 15px;
         }
 
         .header-subtitle {
-          font-size: 11px;
-          margin-top: 5px;
-          letter-spacing: 2px;
+          font-size: 10px;
+          margin-top: 2px;
+          letter-spacing: 1.5px;
         }
 
         .logo-section {
           display: flex;
           align-items: center;
           justify-content: center;
-          margin-right: 10px;
+          margin-right: 8px;
         }
 
         .logo-img {
-          width: 70px;
-          height: 70px;
+          width: 55px;
+          height: 55px;
           object-fit: contain;
           display: block;
         }
@@ -1536,26 +2024,26 @@ export default function Verification() {
         /* Main Title */
         .main-title {
           text-align: center;
-          font-size: 18px;
+          font-size: 16px;
           font-weight: 600;
-          margin: 8px 0 10px 0;
+          margin: 4px 0 8px 0;
           text-decoration: underline;
-          text-underline-offset: 3px;
-          text-decoration-thickness: 2px;
+          text-underline-offset: 2px;
+          text-decoration-thickness: 1.5px;
         }
 
         /* Top Info Box */
         .top-info-box {
           border: 1px solid #000;
-          padding: 0 10px 8px 10px;
-          margin-bottom: 12px;
+          padding: 0 8px 6px 8px;
+          margin-bottom: 10px;
         }
 
         .top-info-body {
           display: flex;
-          gap: 8px;
+          gap: 6px;
           align-items: stretch;
-          margin-top: 8px;
+          margin-top: 6px;
         }
 
         .top-info-left {
@@ -1563,7 +2051,7 @@ export default function Verification() {
           display: flex;
           flex-direction: column;
           justify-content: space-between;
-          min-height: 90px;
+          min-height: 70px;
         }
 
         .top-info-spacer {
@@ -1674,25 +2162,29 @@ export default function Verification() {
         }
 
         .info-line-input.grade-input {
-          min-width: 100px;
+          min-width: 80px;
+          font-size: 20px;
+          height: 30px;
+          font-weight: 500;
         }
 
         .info-box-input {
-          border: 1px solid #000;
-          min-width: 25px;
-          height: 14px;
+          border: none;
+          border-bottom: 1px solid #000;
+          width: 60px;
+          height: 16px;
           font-family: inherit;
-          font-size: 10px;
+          font-size: 11px;
           background: transparent;
           text-align: center;
         }
 
         .info-box-input.tiny {
-          min-width: 22px;
+          width: 50px;
         }
 
         .info-box-input.micro {
-          min-width: 18px;
+          width: 45px;
         }
 
         /* Top Info */
@@ -1713,6 +2205,7 @@ export default function Verification() {
 
         .grade-label {
           font-size: 20px;
+          font-weight: 600;
         }
 
         .grade-row {
@@ -1752,7 +2245,7 @@ export default function Verification() {
 
         /* Sections */
         .form-section {
-          margin-bottom: 15px;
+          margin-bottom: 12px;
         }
 
         .section-header {
@@ -1766,24 +2259,24 @@ export default function Verification() {
           display: inline-block;
           background: #000;
           color: #fff;
-          padding: 2px 20px;
-          border-radius: 15px;
-          font-size: 13px;
+          padding: 1px 15px;
+          border-radius: 12px;
+          font-size: 12px;
           font-weight: 500;
         }
 
         .section-box {
           border: 1.5px solid #000;
-          padding: 12px 12px 8px 12px;
-          margin-top: -10px;
+          padding: 10px 10px 6px 10px;
+          margin-top: -8px;
           border-radius: 4px;
         }
 
         /* Form Rows */
         .form-row {
           display: flex;
-          gap: 15px;
-          margin-bottom: 10px;
+          gap: 10px;
+          margin-bottom: 8px;
           align-items: baseline;
         }
 
@@ -1792,8 +2285,12 @@ export default function Verification() {
         }
 
         .compact-row {
-          gap: 15px;
-          justify-content: space-between;
+          gap: 10px;
+          justify-content: flex-start;
+        }
+
+        .compact-section .compact-row {
+          gap: 8px;
         }
 
         .compact-row .field {
@@ -1894,6 +2391,14 @@ export default function Verification() {
           min-width: 80px;
         }
 
+        .field-input.reg-input {
+          flex: none;
+          width: 110px;
+          text-align: left;
+          padding-left: 5px;
+          letter-spacing: 1px;
+        }
+
         /* CNIC */
         .cnic-row {
           display: flex;
@@ -1953,32 +2458,63 @@ export default function Verification() {
 
         /* Checkboxes */
         .compact-section {
-          padding: 10px 12px;
+          padding: 6px 10px;
         }
 
         .compact-section .form-row {
           margin-bottom: 8px;
-          gap: 15px;
+          gap: 6px;
         }
 
         .compact-section .form-row:last-child {
           margin-bottom: 0;
         }
 
+        .compact-section .field {
+          gap: 2px;
+        }
+
         .compact-section .field label {
-          font-size: 11px;
+          font-size: 10px;
         }
 
         .compact-section .field-input {
           height: 16px;
           font-size: 11px;
+          min-width: 30px !important;
+          flex: 0 1 auto;
+        }
+
+        .compact-section .field-input.xs {
+          width: 50px;
+        }
+
+        .compact-section .field-input.short {
+          width: 60px;
+        }
+
+        .compact-section .field-input.medium {
+          width: 80px;
+        }
+
+        .compact-section .field-grow {
+          flex: 0 1 auto;
+        }
+
+        .compact-section .field-input.wide {
+          width: 70px;
+        }
+
+        .compact-section .info-line.wide {
+          min-width: 40px !important;
+          width: 60px;
         }
 
         .checkbox-group {
           display: flex;
           align-items: center;
-          gap: 10px;
-          margin-right: 8px;
+          gap: 6px;
+          margin-right: 4px;
         }
 
         .stacked-checkboxes {
@@ -2196,7 +2732,18 @@ export default function Verification() {
           }
 
           .grade-label {
-            font-size: 15pt !important;
+            font-size: 18pt !important;
+            font-weight: 600 !important;
+          }
+
+          .grade-input {
+            font-size: 20pt !important;
+            height: 10mm !important;
+            min-width: 40mm !important;
+            font-weight: 700 !important;
+            border-bottom: 1.5pt solid black !important;
+            line-height: 1 !important;
+            display: inline-block !important;
           }
 
           .grade-row {
@@ -2240,10 +2787,32 @@ export default function Verification() {
             font-size: 9.5pt !important;
           }
 
-          .field-input, .info-line-input {
+          .field-input, .info-line-input, .info-box-input {
             font-size: 9.5pt !important;
             height: 5.5mm !important;
             border-bottom-width: 0.75pt !important;
+            border-top: none !important;
+            border-left: none !important;
+            border-right: none !important;
+          }
+
+          .info-box-input.tiny {
+            width: 25mm !important;
+          }
+
+          .info-box-input.micro {
+            width: 20mm !important;
+          }
+
+          .reg-input {
+            width: 35mm !important;
+            flex: none !important;
+          }
+
+          .tokens-row .info-label, .tokens-row .info-box-input {
+            font-size: 13.5pt !important;
+            font-weight: 600 !important;
+            height: 7mm !important;
           }
 
           /* CNIC and Digit Boxes */

@@ -791,23 +791,32 @@ export default function TokenCounter() {
     setEditTokenId(null);
   };
 
-  const handleCnicChange = (cnic: string) => {
-    setFormData({ ...formData, cnic });
+  const handleCnicChange = (value: string) => {
+    // Remove all non-digits for formatting
+    const digits = value.replace(/\D/g, "");
+    let formatted = "";
+    
+    if (digits.length <= 5) {
+      formatted = digits;
+    } else if (digits.length <= 12) {
+      formatted = `${digits.slice(0, 5)}-${digits.slice(5)}`;
+    } else {
+      formatted = `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12, 13)}`;
+    }
+    
+    setFormData({ ...formData, cnic: formatted });
 
     // Clear existing timeout
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
-    // Clean CNIC for searching (remove dashes)
-    const cleanCnic = cnic.replace(/-/g, '');
-
     // Only search if CNIC looks complete (13 digits is standard for CNIC)
-    if (cleanCnic.length >= 13) {
+    if (digits.length >= 13) {
       setSearchingCnic(true);
       searchTimeoutRef.current = setTimeout(async () => {
         try {
-          const res = await tokensAPI.getByCnic(cnic);
+          const res = await tokensAPI.getByCnic(formatted);
           const data = res.data.data;
 
           if (data) {
@@ -839,6 +848,22 @@ export default function TokenCounter() {
         }
       }, 500); // Wait 500ms after typing stops
     }
+  };
+
+  const handleBFormChange = (value: string) => {
+    // Remove all non-digits for formatting
+    const digits = value.replace(/\D/g, "");
+    let formatted = "";
+    
+    if (digits.length <= 5) {
+      formatted = digits;
+    } else if (digits.length <= 12) {
+      formatted = `${digits.slice(0, 5)}-${digits.slice(5)}`;
+    } else {
+      formatted = `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12, 13)}`;
+    }
+    
+    setFormData({ ...formData, bformNumber: formatted });
   };
 
   return (
@@ -1028,11 +1053,9 @@ export default function TokenCounter() {
                         <Label htmlFor="bformNumber">بی فارم نمبر</Label>
                         <Input
                           id="bformNumber"
-                          placeholder="مثال: 35202-6276131-5"
+                          placeholder="XXXXX-XXXXXXX-X"
                           value={formData.bformNumber}
-                          onChange={(e) =>
-                            setFormData({ ...formData, bformNumber: e.target.value })
-                          }
+                          onChange={(e) => handleBFormChange(e.target.value)}
                           className="h-12 mt-2"
                         />
                       </div>

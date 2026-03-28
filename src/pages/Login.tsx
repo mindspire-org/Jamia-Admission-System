@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -71,10 +72,9 @@ export default function Login() {
                 پاس ورڈ
               </Label>
               <div className="relative">
-                <Lock className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                <Input
+                <Lock className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground z-10" />
+                <PasswordInput
                   id="password"
-                  type="password"
                   placeholder="اپنا پاس ورڈ درج کریں"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

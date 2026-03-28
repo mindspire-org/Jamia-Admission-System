@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { usersAPI } from "@/lib/api";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 
 export default function Profile() {
   const { user, updateUser } = useAuth();
@@ -121,9 +122,8 @@ export default function Profile() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="current-password">موجودہ پاس ورڈ</Label>
-              <Input
+              <PasswordInput
                 id="current-password"
-                type="password"
                 className="h-11"
                 value={password.currentPassword}
                 onChange={(e) => setPassword({ ...password, currentPassword: e.target.value })}
@@ -131,9 +131,8 @@ export default function Profile() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="new-password">نیا پاس ورڈ</Label>
-              <Input
+              <PasswordInput
                 id="new-password"
-                type="password"
                 className="h-11"
                 value={password.newPassword}
                 onChange={(e) => setPassword({ ...password, newPassword: e.target.value })}

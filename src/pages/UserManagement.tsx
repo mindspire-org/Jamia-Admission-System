@@ -34,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { UserRole } from "@/contexts/AuthContext";
 import { usersAPI, gradesAPI } from "@/lib/api";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 
 interface User {
     id: string;
@@ -299,9 +300,8 @@ function UserManagement() {
                                     <Label htmlFor="password">
                                         {editingUser ? "نیا پاس ورڈ (اختیاری)" : "پاس ورڈ *"}
                                     </Label>
-                                    <Input
+                                    <PasswordInput
                                         id="password"
-                                        type="password"
                                         placeholder={editingUser ? "اگر تبدیل کرنا ہو تو درج کریں" : "محفوظ پاس ورڈ درج کریں"}
                                         value={formData.password}
                                         onChange={(e) =>

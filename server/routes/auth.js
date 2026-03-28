@@ -20,19 +20,19 @@ router.post('/login', async (req, res) => {
         const user = await User.findOne({ username: username.toLowerCase() });
 
         if (!user) {
-            return res.status(401).json({ message: 'Invalid credentials' });
+            return res.status(401).json({ message: 'صارف موجود نہیں' });
         }
 
         // Check if user is active
         if (!user.isActive) {
-            return res.status(401).json({ message: 'Account is deactivated' });
+            return res.status(401).json({ message: 'صارف فعال نہیں ہے' });
         }
 
         // Check password
         const isMatch = await user.matchPassword(password);
 
         if (!isMatch) {
-            return res.status(401).json({ message: 'Invalid credentials' });
+            return res.status(401).json({ message: 'پاس ورڈ درست نہیں' });
         }
 
         // Generate token
